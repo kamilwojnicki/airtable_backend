@@ -2,8 +2,9 @@ const express = require("express");
 const Airtable = require("airtable");
 const _ = require("lodash");
 const cors = require("cors");
+
+const app = express(); // <- najpierw deklaracja app!
 app.use(cors());
-const app = express();
 app.use(express.json());
 
 Airtable.configure({ apiKey: process.env.AIRTABLE_TOKEN });
