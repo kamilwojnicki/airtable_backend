@@ -396,6 +396,14 @@ app.post("/api/addReservation", async (req, res) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.send(`
+    <h1>Railway Airtable API</h1>
+    <p>Projekt działa! Data builda: ${new Date().toLocaleString()}</p>
+    <p>Endpointy: <a href="/api/addOrderWithProducts">/api/addOrderWithProducts</a> itd.</p>
+  `);
+});
+
 app.listen(process.env.PORT || 3000, () => {
   console.log("Railway Airtable API running!");
 });
