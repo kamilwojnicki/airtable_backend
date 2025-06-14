@@ -3,16 +3,36 @@ const Airtable = require("airtable");
 const _ = require("lodash");
 const cors = require("cors");
 
-const app = express(); // <- najpierw deklaracja app!
+const app = express();
 app.use(cors());
 app.use(express.json());
+
+// --- FUNKCJE POMOCNICZE ---
+function fullSku(product, productExtension, material, hasFlatSeams) {
+  return `${product?.sku || ""}${productExtension ? productExtension.code : "0"}${
+    material ? material.code : ""
+  }${hasFlatSeams ? "1" : "0"}`;
+}
+
+function orderProductAmount(order, orderProduct) {
+  if (!order || !orderProduct) return 0;
+  if (order.isReservation) {
+    return orderProduct.amount ?? 0;
+  } else {
+    return (orderProduct.orderProductCustomizations || []).reduce(
+      (acc, customization) => acc + (customization.amount || 0),
+      0
+    );
+  }
+}
+// --- KONIEC FUNKCJI ---
 
 Airtable.configure({ apiKey: process.env.AIRTABLE_TOKEN });
 const base = Airtable.base("appG8CkMDHD5Rq2nQ");
 
 // Usuń produkt zamówienia z Airtable
 app.post("/api/deleteOrderProduct", async (req, res) => {
-  const { airtableUrl } = req.body; // Przekazuj airtableUrl produktu!
+  const { airtableUrl } = req.body;
   if (!airtableUrl) return res.status(400).json({ error: "Brak airtableUrl" });
 
   try {
@@ -25,12 +45,11 @@ app.post("/api/deleteOrderProduct", async (req, res) => {
 
 // Usuń całe zamówienie i powiązane produkty z Airtable
 app.post("/api/deleteOrder", async (req, res) => {
-  const { order } = req.body; // Przekazuj cały obiekt zamówienia z orderProducts!
+  const { order } = req.body;
   if (!order) return res.status(400).json({ error: "Brak order" });
 
   try {
-    // 1. Usuń produkty powiązane z podzamówieniami
-    for (const orderProduct of order.orderProducts) {
+    for (const orderProduct of order.orderProducts || []) {
       const formula = `{zamowienie} = '${order.name}-${orderProduct.name}'`;
       const products = await base("Products")
         .select({ filterByFormula: formula })
@@ -41,8 +60,7 @@ app.post("/api/deleteOrder", async (req, res) => {
       }
     }
 
-    // 2. Usuń podzamówienia z Orders po nazwie
-    for (const orderProduct of order.orderProducts) {
+    for (const orderProduct of order.orderProducts || []) {
       const orderProductName = order.name + "-" + orderProduct.name;
       const children = await base("Orders")
         .select({ filterByFormula: `{zamowienie} = "${orderProductName}"` })
@@ -53,7 +71,6 @@ app.post("/api/deleteOrder", async (req, res) => {
       }
     }
 
-    // 3. Usuń zamówienie główne z Airtable po nazwie
     const main = await base("Zlecenia bez podziału")
       .select({ filterByFormula: `{Zamówienie} = "${order.name}"` })
       .firstPage();
@@ -70,11 +87,11 @@ app.post("/api/deleteOrder", async (req, res) => {
 
 // Dodaj zamówienie z produktami do Airtable
 app.post("/api/addOrderWithProducts", async (req, res) => {
-  const { order, clientId } = req.body; // Przekazuj cały obiekt order!
+  const { order, clientId } = req.body;
   if (!order) return res.status(400).json({ error: "Brak order" });
 
   try {
-    // 1. Szukamy zamówienia-matki po numerze zamówienia
+    // Zamówienie główne
     const existingMain = await base("Zlecenia bez podziału")
       .select({
         filterByFormula: `FIND("${order.name}", {Zamówienie})`,
@@ -86,7 +103,6 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     const kontaktyField = order.contactPersonId ? [order.contactPersonId] : undefined;
 
     if (existingMain.length > 0 && existingMain[0]?.id) {
-      // Zamówienie już istnieje, aktualizujemy
       orderMainId = existingMain[0].id;
       await base("Zlecenia bez podziału").update(orderMainId, {
         "Zamówienie": order.name,
@@ -95,7 +111,6 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
         "Opis": order.opis || "",
       });
     } else {
-      // Zamówienie nie istnieje, tworzymy nowe
       const orderMain = await base("Zlecenia bez podziału").create({
         "Zamówienie": order.name,
         Klient: klientField,
@@ -105,20 +120,18 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
       orderMainId = orderMain.id;
     }
 
-    const firstOrderProductName = order.orderProducts
+    const firstOrderProductName = (order.orderProducts || [])
       .map((p) => p.name)
       .sort()[0];
 
-    // 1. Pobierz wszystkie podzamówienia (Orders) powiązane z tym zamówieniem po NAZWIE
+    // Usuń stare podzamówienia i produkty
     const oldChildren = await base("Orders")
       .select({
         filterByFormula: `FIND("${order.name}", {Zlecenia bez podziału})`,
       })
       .firstPage();
-    // 2. Zbierz ich NAZWY (nie ID!)
     const oldChildrenNames = oldChildren.map((child) => child.get("zamowienie"));
 
-    // 3. Usuń wszystkie produkty powiązane z tymi podzamówieniami po nazwie
     if (oldChildrenNames.length > 0) {
       const formula = `OR(${oldChildrenNames
         .map((name) => `FIND("${name}", {zamowienie})`)
@@ -132,42 +145,31 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
         await base("Products").destroy(product.id);
       }
     }
-
-    // 4. Usuń stare podzamówienia
     for (const child of oldChildren) {
       if (child?.id) {
         await base("Orders").destroy(child.id);
       }
     }
 
-    // 5. Tworzymy zamówienia-córki i linkujemy do matki
-    for (const orderProduct of order.orderProducts) {
+    // Tworzenie podzamówień i produktów
+    for (const orderProduct of order.orderProducts || []) {
       const orderProductName = order.name + "-" + orderProduct.name;
-      const orderAddedDate = order.createdAt.slice(0, 10);
+      const orderAddedDate = order.createdAt?.slice
+        ? order.createdAt.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
 
       const netPrice =
         orderProduct.name === firstOrderProductName
           ? order.netPrice?.toString()
           : "0";
 
+      const amount = orderProductAmount(order, orderProduct);
+
       const existingChild = await base("Orders")
         .select({ filterByFormula: `{zamowienie} = "${orderProductName}"` })
         .firstPage();
 
       let airtableOrderId;
-
-      // Pomocnicza funkcja do SKU
-      const fullSku = (product, extension, material, hasFlatSeams) => {
-        // uproszczona wersja, dostosuj do swoich potrzeb!
-        return [
-          product?.sku,
-          extension?.sku,
-          material?.sku,
-          hasFlatSeams ? "PLASKIE" : "ZWYKLE",
-        ]
-          .filter(Boolean)
-          .join("-");
-      };
 
       if (existingChild.length > 0 && existingChild[0]?.id) {
         await base("Orders").update(existingChild[0].id, {
@@ -191,7 +193,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Klient: order.clientName,
           "Wartość zamówienia netto": Number(netPrice),
           Komentarz: order.staffComment || "",
-          Ilość: orderProduct.amount || 1,
+          Ilość: amount || 1,
           autor_zlecenia: order.userId,
           domówienie: order.isfollowing || false,
           visualization_url: orderProduct.visualUrl || "",
@@ -235,7 +237,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Klient: order.clientName,
           "Wartość zamówienia netto": Number(netPrice),
           Komentarz: order.staffComment || "",
-          Ilość: orderProduct.amount || 1,
+          Ilość: amount || 1,
           autor_zlecenia: order.userId,
           domówienie: order.isfollowing || false,
           visualization_url: orderProduct.visualUrl || "",
@@ -265,7 +267,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           (customization) => ({
             fields: {
               zamowienie: airtableOrderId ? [airtableOrderId] : [],
-              Nazwa: orderProduct.product.name,
+              Nazwa: orderProduct.product?.name || "",
               ilosc: customization.amount || 0,
               rozmiar: customization.size || "",
               plec:
@@ -282,13 +284,12 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
               ),
               personalizacja: customization.customization || "",
               "dodatkowe info 1": customization.number || "",
-              "X produktu": !!orderProduct.extension
+              "X produktu": orderProduct.extension
                 ? orderProduct.extension.xValue * (customization.amount || 1)
-                : orderProduct.product.xValue * (customization.amount || 1),
+                : orderProduct.product?.xValue * (customization.amount || 1),
             },
           })
         );
-        // Airtable pozwala na max 10 rekordów na raz
         for (const chunk of _.chunk(toCreate, 10)) {
           await base("Products").create(chunk);
         }
@@ -303,7 +304,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
 
 // Dodaj rezerwację do Airtable
 app.post("/api/addReservation", async (req, res) => {
-  const { order, clientId } = req.body; // Przekazuj cały obiekt order!
+  const { order, clientId } = req.body;
   if (!order) return res.status(400).json({ error: "Brak order" });
 
   try {
@@ -332,7 +333,7 @@ app.post("/api/addReservation", async (req, res) => {
 
     const addedDates = {};
 
-    for (const orderProduct of order.orderProducts) {
+    for (const orderProduct of order.orderProducts || []) {
       if (orderProduct.airtableUrl) {
         const orderProductAirtableId = orderProduct.airtableUrl.split("/")[5];
         if (orderProductAirtableId) {
@@ -351,22 +352,29 @@ app.post("/api/addReservation", async (req, res) => {
       }
     }
 
-    for (const orderProduct of order.orderProducts) {
+    for (const orderProduct of order.orderProducts || []) {
       const orderProductName = order.name + "-" + orderProduct.name;
       const orderAddedDate =
         addedDates[orderProductName] || new Date().toISOString().slice(0, 10);
 
+      const amount = orderProductAmount(order, orderProduct);
+
       await base("Orders")
         .create({
           zamowienie: orderProductName,
-          SKU: orderProduct.product?.sku || "",
+          SKU: fullSku(
+            orderProduct.product,
+            orderProduct.extension,
+            orderProduct.material,
+            orderProduct.hasFlatSeams
+          ),
           Typ_zamowienia: "Custom",
           Źródło: order.source,
           "Data dodania zamowienia": orderAddedDate,
           "Data do wysyłki": order.sendDate?.slice(0, 10),
           Klient: order.clientName,
           Komentarz: order.staffComment || "",
-          Ilość: orderProduct.amount || 1,
+          Ilość: amount || 1,
           autor_zlecenia: order.userId,
           order_product_id: orderProduct.id,
           Dodatki: orderProduct.extension?.name,
@@ -381,13 +389,18 @@ app.post("/api/addReservation", async (req, res) => {
           await base("Products").create({
             zamowienie: [airtableOrder.getId()],
             Nazwa: orderProduct.product?.name || "",
-            ilosc: orderProduct.amount || 1,
+            ilosc: amount || 1,
             rozmiar: "rezerwacja",
             plec: "rezerwacja",
-            SKU: orderProduct.product?.sku || "",
-            "X produktu": !!orderProduct.extension
-              ? orderProduct.extension.xValue * (orderProduct.amount || 1)
-              : orderProduct.product.xValue * (orderProduct.amount || 1),
+            SKU: fullSku(
+              orderProduct.product,
+              orderProduct.extension,
+              orderProduct.material,
+              orderProduct.hasFlatSeams
+            ),
+            "X produktu": orderProduct.extension
+              ? orderProduct.extension.xValue * (amount || 1)
+              : orderProduct.product?.xValue * (amount || 1),
           });
         });
     }
