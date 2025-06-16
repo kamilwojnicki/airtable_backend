@@ -132,19 +132,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
       .firstPage();
     const oldChildrenNames = oldChildren.map((child) => child.get("zamowienie"));
 
-    if (oldChildrenNames.length > 0) {
-      const formula = `OR(${oldChildrenNames
-        .map((name) => `FIND("${name}", {zamowienie})`)
-        .join(",")})`;
 
-      const oldProducts = await base("Products")
-        .select({ filterByFormula: formula })
-        .firstPage();
-
-      for (const product of oldProducts) {
-        await base("Products").destroy(product.id);
-      }
-    }
     for (const child of oldChildren) {
       if (child?.id) {
         await base("Orders").destroy(child.id);
