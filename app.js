@@ -2,7 +2,8 @@ const express = require("express");
 const Airtable = require("airtable");
 const _ = require("lodash");
 const cors = require("cors");
-
+const OpenAI = require('openai');
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -410,3 +411,152 @@ app.get("/", (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
   console.log("Railway Airtable API running!");
 });
+
+// app.js na Railway - DODAJ TE ENDPOINTY
+
+// Endpoint do parsowania tekstu
+app.post('/api/parse-text', async (req, res) => {
+  console.log('Railway: parse-text called');
+  
+  try {
+    const { text, products } = req.body;
+    
+    if (!text || typeof text !== "string" || !Array.isArray(products)) {
+      return res.status(400).json({ error: "Brak tekstu wejściowego lub produktów." });
+    }
+
+    const productsSection = buildProductsSection(products);
+    
+    const prompt = `
+Otrzymasz tekst z zamówieniem na produkty (np. koszulki, bluzy, inne). Każdy produkt, którego dotyczy zamówienie, jest opisany poniżej – każdemu przypisana jest literka oraz nazwa produktu. W tekście klienta może być użyta zarówno literka, jak i pełna nazwa produktu.
+
+Wyodrębnij z tekstu dane do tabeli o kolumnach:
+- personalizacja (może być to imię, nick, pseudonim itp.)
+- rozmiar (w formacie takim jak poniżej)
+- płeć (jeśli występuje: MĘSKA, DAMSKA, UNISEX, DZIECIĘCA – jeśli nie ma, spróbuj rozpoznać na podstawie imienia lub kontekstu)
+- numer (jeśli występuje)
+- podzamówienie (oznaczenie literą, np. a, b, c – lub nazwą produktu, jeśli pojawia się w tekście)
+- ilość (jeśli w tekście jest np. "3 x S", wpisz ilość 3; jeśli nie podano ilości, załóż domyślnie 1)
+
+Dostępne podzamówienia i rozmiarówki:
+${productsSection}
+
+Jeśli w tekście pojawia się rozmiar typu XXL, XXXL, XXXXL itp., ZAMIENIAJ je odpowiednio na 2XL, 3XL, 4XL, 5XL, 6XL.
+
+Zwróć wynik jako tablicę JSON, np.:
+[
+  { "personalizacja": "ŁUKASZ", "rozmiar": "2XL", "płeć": "MĘSKA", "numer": null, "podzamówienie": "a", "ilość": 1 }
+]
+
+Oto tekst:
+"""
+${text}
+"""
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+    });
+
+    const content = completion.choices?.[0]?.message?.content;
+    const match = content?.match(/\[[\s\S]*\]/);
+    
+    if (!match) {
+      return res.status(400).json({ error: "Brak danych w odpowiedzi OpenAI." });
+    }
+    
+    const data = JSON.parse(match[0]);
+    return res.status(200).json({ data });
+    
+  } catch (error) {
+    console.error('Railway parse-text error:', error);
+    return res.status(500).json({ error: error.message || "Błąd serwera." });
+  }
+});
+
+// Endpoint do parsowania obrazu
+app.post('/api/parse-image', async (req, res) => {
+  console.log('Railway: parse-image called');
+  
+  try {
+    const { imageUrl, products, note } = req.body;
+    
+    if (!imageUrl) {
+      return res.status(400).json({ error: "Brak linku do obrazka" });
+    }
+
+    const productsSection = buildProductsSection(products);
+    
+    const prompt = `
+Otrzymasz zdjęcie lub zrzut ekranu z zamówieniem na produkty (np. koszulki, bluzy, inne). Każdy produkt, którego dotyczy zamówienie, jest opisany poniżej – każdemu przypisana jest literka oraz nazwa produktu. W tekście klienta może być użyta zarówno literka, jak i pełna nazwa produktu.
+
+${note ? `Dodatkowe informacje od operatora: ${note}\n` : ""}
+
+Wyodrębnij z obrazu dane do tabeli o kolumnach:
+- personalizacja (może być to imię, nick, pseudonim itp.)
+- rozmiar (w formacie takim jak poniżej)
+- płeć (jeśli występuje: MĘSKA, DAMSKA, UNISEX, DZIECIĘCA – jeśli nie ma, spróbuj rozpoznać na podstawie imienia lub kontekstu)
+- numer (jeśli występuje)
+- podzamówienie (oznaczenie literą, np. a, b, c – lub nazwą produktu, jeśli pojawia się w tekście; przypisz do odpowiedniego produktu zgodnie z opisem poniżej)
+- ilość (jeśli w obrazie/tekście jest np. "3 x S", wpisz ilość 3; jeśli nie podano ilości, załóż domyślnie 1)
+
+Dostępne podzamówienia i rozmiarówki:
+${productsSection}
+
+Jeśli w tekście pojawia się rozmiar typu XXL, XXXL, XXXXL itp., ZAMIENIAJ je odpowiednio na 2XL, 3XL, 4XL, 5XL, 6XL.
+
+Zwróć wynik jako tablicę JSON, np.:
+[
+  { "personalizacja": "ŁUKASZ", "rozmiar": "2XL", "płeć": "MĘSKA", "numer": null, "podzamówienie": "a", "ilość": 1 }
+]
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 2048,
+    });
+
+    const content = completion.choices[0]?.message?.content || "";
+    let data = null;
+    
+    const match = content.match(/\[[\s\S]*\]/);
+    if (match) {
+      data = JSON.parse(match[0]);
+    }
+
+    return res.status(200).json({ data });
+    
+  } catch (error) {
+    console.error('Railway parse-image error:', error);
+    return res.status(500).json({ error: "Błąd przetwarzania obrazu." });
+  }
+});
+
+// Funkcja pomocnicza - dodaj na końcu pliku
+function buildProductsSection(products) {
+  return products
+    .map(
+      (p, idx) =>
+        `Podzamówienie ${String.fromCharCode(97 + idx)} (${p.productName || p.label}):
+- SKU: ${p.sku}
+${(p.genders || [])
+  .map(
+    (g) =>
+      `- Płeć: ${g.label}, dostępne rozmiary: ${(g.sizes || []).join(", ")}`
+  )
+  .join("\n")}`
+    )
+    .join("\n\n");
+}
