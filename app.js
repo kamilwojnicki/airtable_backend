@@ -192,14 +192,6 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Szwy: orderProduct.hasFlatSeams ? "Płaskie" : "Zwykłe",
           Material: orderProduct.material?.name,
           Metka: order.label,
-            ...(await (async () => {
-            try {
-              return { "Metka_new": [order.label] };
-            } catch (error) {
-              console.log("Błąd przy dodawaniu Metka_new:", error.message);
-              return {};
-            }
-          })()),
           Żakardy: order.jacquard,
           customLabelUrl: order.customLabelUrl,
           autor_plikow: order.designer,
@@ -244,14 +236,6 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Szwy: orderProduct.hasFlatSeams ? "Płaskie" : "Zwykłe",
           Material: orderProduct.material?.name,
           Metka: order.label,
-            ...(await (async () => {
-            try {
-              return { "Metka_new": [order.label] };
-            } catch (error) {
-              console.log("Błąd przy dodawaniu Metka_new:", error.message);
-              return {};
-            }
-          })()),
           Żakardy: order.jacquard,
           customLabelUrl: order.customLabelUrl,
           autor_plikow: order.designer,
