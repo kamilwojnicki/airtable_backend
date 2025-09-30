@@ -108,14 +108,14 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
       await base("Zlecenia bez podziału").update(orderMainId, {
         "Zamówienie": order.name,
         Klient: klientField,
-        Kontakty: kontaktyField,
+        "Osoba kontaktowa": kontaktyField,  // zmienione z Kontakty
         "Opis": order.opis || "",
       });
     } else {
       const orderMain = await base("Zlecenia bez podziału").create({
         "Zamówienie": order.name,
         Klient: klientField,
-        Kontakty: kontaktyField,
+        "Osoba kontaktowa": kontaktyField,  // zmienione z Kontakty
         "Opis": order.opis || "",
       });
       orderMainId = orderMain.id;
