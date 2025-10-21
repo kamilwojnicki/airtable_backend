@@ -87,7 +87,6 @@ app.post("/api/deleteOrder", async (req, res) => {
 });
 
 // Dodaj zamówienie z produktami do Airtable
-// Dodaj zamówienie z produktami do Airtable
 app.post("/api/addOrderWithProducts", async (req, res) => {
   console.log("🚀 Railway: Otrzymano request addOrderWithProducts");
   console.log("📦 Railway: Headers:", req.headers);
@@ -134,7 +133,20 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     let orderMainId;
 
     const klientField = order.clientId?.trim() ? [order.clientId.trim()] : undefined;
-    const kontaktyField = order.contactPersonId ? [order.contactPersonId] : undefined;
+    
+    // ✅ DODANE: Walidacja kontaktu przed użyciem
+    let kontaktyField = undefined;
+    if (order.contactPersonId) {
+      try {
+        console.log("🔍 Railway: Sprawdzam czy kontakt istnieje:", order.contactPersonId);
+        await base("Kontakty").find(order.contactPersonId);
+        kontaktyField = [order.contactPersonId];
+        console.log("✅ Railway: Kontakt istnieje w Airtable:", order.contactPersonId);
+      } catch (contactError) {
+        console.log("⚠️ Railway: Kontakt nie istnieje w Airtable:", order.contactPersonId, "- pomijam to pole");
+        kontaktyField = undefined; // Nie dodawaj nieistniejącego kontaktu
+      }
+    }
 
     console.log("🏷️ Railway: Fields do Airtable:", {
       klientField,
@@ -146,23 +158,58 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     if (existingMain.length > 0 && existingMain[0]?.id) {
       orderMainId = existingMain[0].id;
       console.log("🔄 Railway: Aktualizuję existingMain:", orderMainId);
-      await base("Zlecenia bez podziału").update(orderMainId, {
-        "Zamówienie": order.name,
-        Klient: klientField,
-        "Osoba kontaktowa": kontaktyField,  // zmienione z Kontakty
-        "Opis": order.opis || "",
-      });
-      console.log("✅ Railway: ExistingMain zaktualizowany");
+      
+      try {
+        await base("Zlecenia bez podziału").update(orderMainId, {
+          "Zamówienie": order.name,
+          Klient: klientField,
+          "Osoba kontaktowa": kontaktyField, // ✅ Używaj zwalidowanego pola
+          "Opis": order.opis || "",
+        });
+        console.log("✅ Railway: ExistingMain zaktualizowany");
+      } catch (updateError) {
+        console.error("❌ Railway: Błąd aktualizacji existingMain:", updateError.message);
+        // Spróbuj bez kontaktu jeśli nadal błąd
+        if (kontaktyField) {
+          console.log("🔄 Railway: Próbuję aktualizację bez kontaktu...");
+          await base("Zlecenia bez podziału").update(orderMainId, {
+            "Zamówienie": order.name,
+            Klient: klientField,
+            "Opis": order.opis || "",
+          });
+          console.log("✅ Railway: ExistingMain zaktualizowany bez kontaktu");
+        } else {
+          throw updateError;
+        }
+      }
     } else {
       console.log("➕ Railway: Tworzę nowy orderMain");
-      const orderMain = await base("Zlecenia bez podziału").create({
-        "Zamówienie": order.name,
-        Klient: klientField,
-        "Osoba kontaktowa": kontaktyField,  // zmienione z Kontakty
-        "Opis": order.opis || "",
-      });
-      orderMainId = orderMain.id;
-      console.log("✅ Railway: Nowy orderMain utworzony:", orderMainId);
+      
+      try {
+        const orderMain = await base("Zlecenia bez podziału").create({
+          "Zamówienie": order.name,
+          Klient: klientField,
+          "Osoba kontaktowa": kontaktyField, // ✅ Używaj zwalidowanego pola
+          "Opis": order.opis || "",
+        });
+        orderMainId = orderMain.id;
+        console.log("✅ Railway: Nowy orderMain utworzony:", orderMainId);
+      } catch (createError) {
+        console.error("❌ Railway: Błąd tworzenia orderMain:", createError.message);
+        // Spróbuj bez kontaktu jeśli nadal błąd
+        if (kontaktyField) {
+          console.log("🔄 Railway: Próbuję utworzenie bez kontaktu...");
+          const orderMain = await base("Zlecenia bez podziału").create({
+            "Zamówienie": order.name,
+            Klient: klientField,
+            "Opis": order.opis || "",
+          });
+          orderMainId = orderMain.id;
+          console.log("✅ Railway: Nowy orderMain utworzony bez kontaktu:", orderMainId);
+        } else {
+          throw createError;
+        }
+      }
     }
 
     const firstOrderProductName = (order.orderProducts || [])
