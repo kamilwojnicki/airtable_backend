@@ -87,31 +87,74 @@ app.post("/api/deleteOrder", async (req, res) => {
 });
 
 // Dodaj zamówienie z produktami do Airtable
+// Dodaj zamówienie z produktami do Airtable
 app.post("/api/addOrderWithProducts", async (req, res) => {
+  console.log("🚀 Railway: Otrzymano request addOrderWithProducts");
+  console.log("📦 Railway: Headers:", req.headers);
+  console.log("📦 Railway: Body size:", JSON.stringify(req.body).length);
+
   const { order, clientId } = req.body;
-  if (!order) return res.status(400).json({ error: "Brak order" });
+  
+  if (!order) {
+    console.log("❌ Railway: Brak order w body");
+    return res.status(400).json({ error: "Brak order" });
+  }
+
+  console.log("📋 Railway: Order podstawowe dane:", {
+    orderId: order.id,
+    clientName: order.clientName,
+    orderName: order.name,
+    status: order.status,
+    clientId: order.clientId,
+    contactPersonId: order.contactPersonId,
+    airtableClientId: order.airtableClientId,
+    contactId: order.contactId,
+    productCount: order.orderProducts?.length || 0
+  });
+
+  console.log("🔍 Railway: Pola PostgreSQL w order:", {
+    airtableClientId: order.airtableClientId,
+    contactId: order.contactId,
+    airtableClient: !!order.airtableClient,
+    contact: !!order.contact
+  });
 
   try {
+    console.log("✅ Railway: Rozpoczynam przetwarzanie order...");
+
     // Zamówienie główne
+    console.log("📊 Railway: Szukam existingMain dla:", order.name);
     const existingMain = await base("Zlecenia bez podziału")
       .select({
         filterByFormula: `FIND("${order.name}", {Zamówienie})`,
       })
       .firstPage();
+    
+    console.log("📊 Railway: Znaleziono existingMain:", existingMain.length);
     let orderMainId;
 
     const klientField = order.clientId?.trim() ? [order.clientId.trim()] : undefined;
     const kontaktyField = order.contactPersonId ? [order.contactPersonId] : undefined;
 
+    console.log("🏷️ Railway: Fields do Airtable:", {
+      klientField,
+      kontaktyField,
+      orderName: order.name,
+      opis: order.opis
+    });
+
     if (existingMain.length > 0 && existingMain[0]?.id) {
       orderMainId = existingMain[0].id;
+      console.log("🔄 Railway: Aktualizuję existingMain:", orderMainId);
       await base("Zlecenia bez podziału").update(orderMainId, {
         "Zamówienie": order.name,
         Klient: klientField,
         "Osoba kontaktowa": kontaktyField,  // zmienione z Kontakty
         "Opis": order.opis || "",
       });
+      console.log("✅ Railway: ExistingMain zaktualizowany");
     } else {
+      console.log("➕ Railway: Tworzę nowy orderMain");
       const orderMain = await base("Zlecenia bez podziału").create({
         "Zamówienie": order.name,
         Klient: klientField,
@@ -119,30 +162,40 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
         "Opis": order.opis || "",
       });
       orderMainId = orderMain.id;
+      console.log("✅ Railway: Nowy orderMain utworzony:", orderMainId);
     }
 
     const firstOrderProductName = (order.orderProducts || [])
       .map((p) => p.name)
       .sort()[0];
 
+    console.log("🥇 Railway: FirstOrderProductName:", firstOrderProductName);
+
     // Usuń stare podzamówienia i produkty
+    console.log("🗑️ Railway: Usuwam stare podzamówienia...");
     const oldChildren = await base("Orders")
       .select({
         filterByFormula: `FIND("${order.name}", {Zlecenia bez podziału})`,
       })
       .firstPage();
+    
+    console.log("🗑️ Railway: Znaleziono starych children:", oldChildren.length);
     const oldChildrenNames = oldChildren.map((child) => child.get("zamowienie"));
-
 
     for (const child of oldChildren) {
       if (child?.id) {
+        console.log("🗑️ Railway: Usuwam child:", child.id);
         await base("Orders").destroy(child.id);
       }
     }
+    console.log("✅ Railway: Stare children usunięte");
 
     // Tworzenie podzamówień i produktów
+    console.log("🔄 Railway: Tworzę nowe orderProducts...");
     for (const orderProduct of order.orderProducts || []) {
       const orderProductName = order.name + "-" + orderProduct.name;
+      console.log("📦 Railway: Przetwarzam orderProduct:", orderProductName);
+      
       const orderAddedDate = order.createdAt?.slice
         ? order.createdAt.slice(0, 10)
         : new Date().toISOString().slice(0, 10);
@@ -154,6 +207,13 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
 
       const amount = orderProductAmount(order, orderProduct);
 
+      console.log("💰 Railway: OrderProduct details:", {
+        orderProductName,
+        orderAddedDate,
+        netPrice,
+        amount
+      });
+
       const existingChild = await base("Orders")
         .select({ filterByFormula: `{zamowienie} = "${orderProductName}"` })
         .firstPage();
@@ -161,6 +221,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
       let airtableOrderId;
 
       if (existingChild.length > 0 && existingChild[0]?.id) {
+        console.log("🔄 Railway: Aktualizuję existingChild:", existingChild[0].id);
         await base("Orders").update(existingChild[0].id, {
           zamowienie: orderProductName,
           SKU: fullSku(
@@ -204,7 +265,9 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           "Zlecenia bez podziału": [orderMainId],
         });
         airtableOrderId = existingChild[0].id;
+        console.log("✅ Railway: ExistingChild zaktualizowany");
       } else {
+        console.log("➕ Railway: Tworzę nowy Orders record");
         const createdOrder = await base("Orders").create({
           zamowienie: orderProductName,
           SKU: fullSku(
@@ -248,10 +311,12 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           "Zlecenia bez podziału": [orderMainId],
         });
         airtableOrderId = createdOrder.id;
+        console.log("✅ Railway: Nowy Orders record utworzony:", airtableOrderId);
       }
 
       // Dodaj personalizacje (customizations) do Products
       if (airtableOrderId && orderProduct.orderProductCustomizations) {
+        console.log("📝 Railway: Dodaję customizations:", orderProduct.orderProductCustomizations.length);
         const toCreate = orderProduct.orderProductCustomizations.map(
           (customization) => ({
             fields: {
@@ -280,13 +345,22 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           })
         );
         for (const chunk of _.chunk(toCreate, 10)) {
+          console.log("📝 Railway: Tworzę chunk Products:", chunk.length);
           await base("Products").create(chunk);
         }
+        console.log("✅ Railway: Customizations dodane");
       }
     }
 
+    console.log("🎉 Railway: Order pomyślnie przetworzony!");
     res.json({ ok: true });
   } catch (error) {
+    console.error("❌ Railway: Błąd podczas przetwarzania:", {
+      message: error.message,
+      stack: error.stack,
+      orderName: order?.name,
+      orderId: order?.id
+    });
     res.status(500).json({ error: error.message });
   }
 });
