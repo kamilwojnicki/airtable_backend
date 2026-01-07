@@ -163,19 +163,20 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
         await base("Zlecenia bez podziału").update(orderMainId, {
           "Zamówienie": order.name,
           Klient: klientField,
-          "Osoba kontaktowa": kontaktyField, // ✅ Używaj zwalidowanego pola
+          "Osoba kontaktowa": kontaktyField,
           "Opis": order.opis || "",
+          "PG_ID": order.id?.toString() || "",  // dodane
         });
         console.log("✅ Railway: ExistingMain zaktualizowany");
       } catch (updateError) {
         console.error("❌ Railway: Błąd aktualizacji existingMain:", updateError.message);
-        // Spróbuj bez kontaktu jeśli nadal błąd
         if (kontaktyField) {
           console.log("🔄 Railway: Próbuję aktualizację bez kontaktu...");
           await base("Zlecenia bez podziału").update(orderMainId, {
             "Zamówienie": order.name,
             Klient: klientField,
             "Opis": order.opis || "",
+            "PG_ID": order.id?.toString() || "",  // dodane
           });
           console.log("✅ Railway: ExistingMain zaktualizowany bez kontaktu");
         } else {
@@ -189,20 +190,21 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
         const orderMain = await base("Zlecenia bez podziału").create({
           "Zamówienie": order.name,
           Klient: klientField,
-          "Osoba kontaktowa": kontaktyField, // ✅ Używaj zwalidowanego pola
+          "Osoba kontaktowa": kontaktyField,
           "Opis": order.opis || "",
+          "PG_ID": order.id?.toString() || "",  // dodane
         });
         orderMainId = orderMain.id;
         console.log("✅ Railway: Nowy orderMain utworzony:", orderMainId);
       } catch (createError) {
         console.error("❌ Railway: Błąd tworzenia orderMain:", createError.message);
-        // Spróbuj bez kontaktu jeśli nadal błąd
         if (kontaktyField) {
           console.log("🔄 Railway: Próbuję utworzenie bez kontaktu...");
           const orderMain = await base("Zlecenia bez podziału").create({
             "Zamówienie": order.name,
             Klient: klientField,
             "Opis": order.opis || "",
+            "PG_ID": order.id?.toString() || "",  // dodane
           });
           orderMainId = orderMain.id;
           console.log("✅ Railway: Nowy orderMain utworzony bez kontaktu:", orderMainId);
