@@ -26,6 +26,28 @@ function orderProductAmount(order, orderProduct) {
     );
   }
 }
+
+// ✅ DODANE: Funkcja budująca adres do wklejenia
+function buildShippingAddress(shippingData, shippingMethodName) {
+  const addressParts = [];
+  
+  if (shippingData.shippingName) addressParts.push(shippingData.shippingName);
+  if (shippingData.shippingStreet) addressParts.push(shippingData.shippingStreet);
+  if (shippingData.shippingPostalCode || shippingData.shippingCity) {
+    const cityLine = [shippingData.shippingPostalCode, shippingData.shippingCity]
+      .filter(Boolean)
+      .join(" ");
+    if (cityLine) addressParts.push(cityLine);
+  }
+  if (shippingData.shippingCountry && shippingData.shippingCountry !== "Polska") {
+    addressParts.push(shippingData.shippingCountry);
+  }
+  if (shippingData.shippingPhone) addressParts.push(`Tel: ${shippingData.shippingPhone}`);
+  if (shippingData.shippingEmail) addressParts.push(`Email: ${shippingData.shippingEmail}`);
+  if (shippingData.paczkomatId) addressParts.push(`Paczkomat: ${shippingData.paczkomatId}`);
+  
+  return addressParts.join("\n");
+}
 // --- KONIEC FUNKCJI ---
 
 Airtable.configure({ apiKey: process.env.AIRTABLE_TOKEN });
@@ -118,6 +140,12 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     contact: !!order.contact
   });
 
+  // ✅ DODANE: Log danych wysyłki
+  console.log("📬 Railway: Dane wysyłki:", {
+    hasShippingData: !!order.shippingData,
+    shippingMethodName: order.shippingMethodName || "brak"
+  });
+
   try {
     console.log("✅ Railway: Rozpoczynam przetwarzanie order...");
 
@@ -165,7 +193,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Klient: klientField,
           "Osoba kontaktowa": kontaktyField,
           "Opis": order.opis || "",
-          "PG_ID": order.id?.toString() || "",  // dodane
+          "PG_ID": order.id?.toString() || "",
         });
         console.log("✅ Railway: ExistingMain zaktualizowany");
       } catch (updateError) {
@@ -176,7 +204,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
             "Zamówienie": order.name,
             Klient: klientField,
             "Opis": order.opis || "",
-            "PG_ID": order.id?.toString() || "",  // dodane
+            "PG_ID": order.id?.toString() || "",
           });
           console.log("✅ Railway: ExistingMain zaktualizowany bez kontaktu");
         } else {
@@ -192,7 +220,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
           Klient: klientField,
           "Osoba kontaktowa": kontaktyField,
           "Opis": order.opis || "",
-          "PG_ID": order.id?.toString() || "",  // dodane
+          "PG_ID": order.id?.toString() || "",
         });
         orderMainId = orderMain.id;
         console.log("✅ Railway: Nowy orderMain utworzony:", orderMainId);
@@ -204,7 +232,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
             "Zamówienie": order.name,
             Klient: klientField,
             "Opis": order.opis || "",
-            "PG_ID": order.id?.toString() || "",  // dodane
+            "PG_ID": order.id?.toString() || "",
           });
           orderMainId = orderMain.id;
           console.log("✅ Railway: Nowy orderMain utworzony bez kontaktu:", orderMainId);
@@ -401,6 +429,39 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
       }
     }
 
+    // ✅ DODANE: Aktualizacja adresu wysyłki po utworzeniu zamówienia
+    if (orderMainId && order.shippingData) {
+      console.log("📬 Railway: Aktualizuję adres wysyłki...");
+      
+      const shippingData = order.shippingData;
+      const shippingMethodName = order.shippingMethodName || "";
+      
+      const fullAddress = buildShippingAddress(shippingData, shippingMethodName);
+      const updateDateTime = new Date().toISOString();
+      
+      const addressFields = {
+        "Adres do wklejenia": fullAddress,
+        "Data ostatniej aktualizacji adresu": updateDateTime,
+      };
+      
+      if (shippingMethodName) {
+        addressFields["Metoda wysyłki"] = shippingMethodName;
+      }
+      
+      console.log("📬 Railway: Adres do wklejenia:", fullAddress);
+      console.log("📬 Railway: Metoda wysyłki:", shippingMethodName || "brak");
+      
+      try {
+        await base("Zlecenia bez podziału").update(orderMainId, addressFields);
+        console.log("✅ Railway: Adres wysyłki zaktualizowany");
+      } catch (addressError) {
+        console.error("⚠️ Railway: Błąd aktualizacji adresu (nie krytyczny):", addressError.message);
+        // Nie przerywamy - zamówienie zostało dodane, tylko adres się nie zaktualizował
+      }
+    } else {
+      console.log("📬 Railway: Brak danych wysyłki do aktualizacji");
+    }
+
     console.log("🎉 Railway: Order pomyślnie przetworzony!");
     res.json({ ok: true });
   } catch (error) {
@@ -535,8 +596,6 @@ app.listen(process.env.PORT || 3000, () => {
   console.log("Railway Airtable API running!");
 });
 
-// app.js na Railway - DODAJ TE ENDPOINTY
-
 // Endpoint do parsowania tekstu
 app.post('/api/parse-text', async (req, res) => {
   console.log('Railway: parse-text called');
@@ -667,7 +726,7 @@ Zwróć wynik jako tablicę JSON, np.:
   }
 });
 
-// Funkcja pomocnicza - dodaj na końcu pliku
+// Funkcja pomocnicza
 function buildProductsSection(products) {
   return products
     .map(
