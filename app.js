@@ -252,7 +252,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     console.log("🗑️ Railway: Usuwam stare podzamówienia...");
     const oldChildren = await base("Orders")
       .select({
-        filterByFormula: `FIND("${order.name}", {Zlecenia bez podziału})`,
+        filterByFormula: `LEFT({zamowienie}, ${order.name.length + 1}) = "${order.name}-"`,
       })
       .firstPage();
     
