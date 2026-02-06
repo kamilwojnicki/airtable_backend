@@ -153,7 +153,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
     console.log("📊 Railway: Szukam existingMain dla:", order.name);
     const existingMain = await base("Zlecenia bez podziału")
       .select({
-        filterByFormula: `FIND("${order.name}", {Zamówienie})`,
+        filterByFormula: `{Zamówienie} = "${order.name}"`,
       })
       .firstPage();
     
