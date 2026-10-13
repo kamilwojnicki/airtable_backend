@@ -3,6 +3,7 @@ const Airtable = require("airtable");
 const _ = require("lodash");
 const cors = require("cors");
 const OpenAI = require('openai');
+const { mapPersonalizationSlots } = require("./product-customization-fields");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(cors());
@@ -417,6 +418,7 @@ app.post("/api/addOrderWithProducts", async (req, res) => {
               ),
               personalizacja: customization.customization || "",
               "dodatkowe info 1": customization.number || "",
+              ...mapPersonalizationSlots(customization),
               "X produktu": orderProduct.extension
                 ? orderProduct.extension.xValue * (customization.amount || 1)
                 : orderProduct.product?.xValue * (customization.amount || 1),
